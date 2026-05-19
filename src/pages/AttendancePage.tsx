@@ -285,7 +285,7 @@ const AttendancePage = () => {
           employee_id: employee.id,
           attendance_date: today,
           punch_in_time: now,
-          status: 'present',
+          status: 'Present',
           is_consolidated: false,
         });
 

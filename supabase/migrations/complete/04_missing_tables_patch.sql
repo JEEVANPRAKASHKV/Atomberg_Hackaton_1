@@ -114,7 +114,8 @@ CREATE POLICY "Employees can apply for leaves"
 
 CREATE POLICY "Employees can cancel own pending leaves"
   ON public.hr_leaves FOR UPDATE TO authenticated
-  USING (employee_id = public.user_employee_id() AND status = 'Pending');
+  USING (employee_id = public.user_employee_id() AND status = 'Pending')
+  WITH CHECK (employee_id = public.user_employee_id());
 
 CREATE POLICY "Managers can view team leaves"
   ON public.hr_leaves FOR SELECT TO authenticated

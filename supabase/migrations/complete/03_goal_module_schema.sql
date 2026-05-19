@@ -71,7 +71,8 @@ CREATE POLICY "Employees insert own sheets"
   WITH CHECK (employee_id = public.user_employee_id());
 CREATE POLICY "Employees update own draft sheets"
   ON public.hr_goal_sheets FOR UPDATE TO authenticated
-  USING (employee_id = public.user_employee_id() AND status IN ('draft','rework'));
+  USING (employee_id = public.user_employee_id() AND status IN ('draft','rework'))
+  WITH CHECK (employee_id = public.user_employee_id());
 CREATE POLICY "Managers view team sheets"
   ON public.hr_goal_sheets FOR SELECT TO authenticated
   USING (EXISTS (

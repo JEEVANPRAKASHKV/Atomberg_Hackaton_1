@@ -33,7 +33,8 @@ CREATE POLICY "Employees insert own week logs"
   WITH CHECK (employee_id = public.user_employee_id());
 CREATE POLICY "Employees update own draft week logs"
   ON public.hr_work_log_weeks FOR UPDATE TO authenticated
-  USING (employee_id = public.user_employee_id() AND status IN ('Draft','Rework'));
+  USING (employee_id = public.user_employee_id() AND status IN ('Draft','Rework'))
+  WITH CHECK (employee_id = public.user_employee_id());
 CREATE POLICY "Managers view team week logs"
   ON public.hr_work_log_weeks FOR SELECT TO authenticated
   USING (EXISTS (
@@ -87,7 +88,8 @@ CREATE POLICY "Employees insert own tasks"
   WITH CHECK (employee_id = public.user_employee_id());
 CREATE POLICY "Employees update own draft tasks"
   ON public.hr_work_log_tasks FOR UPDATE TO authenticated
-  USING (employee_id = public.user_employee_id() AND day_status IN ('Draft','Rework'));
+  USING (employee_id = public.user_employee_id() AND day_status IN ('Draft','Rework'))
+  WITH CHECK (employee_id = public.user_employee_id());
 CREATE POLICY "Employees delete own draft tasks"
   ON public.hr_work_log_tasks FOR DELETE TO authenticated
   USING (employee_id = public.user_employee_id() AND day_status = 'Draft');

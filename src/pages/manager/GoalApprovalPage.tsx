@@ -18,11 +18,14 @@ import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useEffect } from 'react';
 import {
-  useTeamGoalSheets, useUpdateGoalSheetStatus, useGoalCycles
+  useTeamGoalSheets, useUpdateGoalSheetStatus, useGoalCycles, useUpsertGoal
 } from '@/hooks/useGoals';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { GoalSheetStatusBadge } from '@/components/goals/GoalStatusBadges';
 import { UoMScoreDisplay } from '@/components/goals/UoMScoreDisplay';
-import type { GoalSheet, SheetStatus } from '@/types/goals';
+import { validateWeightageTotal } from '@/types/goals';
+import type { GoalSheet, SheetStatus, Goal } from '@/types/goals';
 
 // ── Stat Card ───────────────────────────────────────────────
 const StatCard = ({ label, value, color }: { label: string; value: number; color: string }) => (
@@ -44,8 +47,12 @@ const GoalApprovalPage = () => {
   const [reviewing, setReviewing]         = useState<GoalSheet | null>(null);
   const [action, setAction]               = useState<'approved' | 'rework' | null>(null);
   const [reworkComment, setReworkComment] = useState('');
+  
+  // Track inline edits by managers
+  const [editedGoals, setEditedGoals] = useState<Record<string, Partial<Goal>>>({});
 
   const updateStatus = useUpdateGoalSheetStatus();
+  const upsertGoal   = useUpsertGoal();
   const { data: cycles = [] } = useGoalCycles();
 
   useEffect(() => {
@@ -55,7 +62,8 @@ const GoalApprovalPage = () => {
   }, [user]);
 
   const { data: allSheets = [], isLoading } = useTeamGoalSheets(
-    filterCycle !== 'all' ? filterCycle : undefined
+    filterCycle !== 'all' ? filterCycle : undefined,
+    managerId || undefined
   );
 
   // Filter by status
@@ -76,7 +84,38 @@ const GoalApprovalPage = () => {
       toast({ title: 'Please enter your feedback comment', variant: 'destructive' });
       return;
     }
+
     try {
+      if (action === 'approved') {
+        const sheetGoals = (reviewing as any).goals ?? [];
+        
+        // Merge original goals with any edits
+        const finalGoals = sheetGoals.map((g: any) => ({
+          ...g,
+          ...(editedGoals[g.id] || {})
+        }));
+
+        // Validate weightage
+        if (!validateWeightageTotal(finalGoals)) {
+          toast({ title: 'Total weightage across all goals must equal 100%', variant: 'destructive' });
+          return;
+        }
+
+        // Save any inline edits to the database
+        const editsToSave = Object.keys(editedGoals)
+          .filter(id => sheetGoals.some((g: any) => g.id === id));
+          
+        for (const goalId of editsToSave) {
+          const original = sheetGoals.find((g: any) => g.id === goalId);
+          const updates = editedGoals[goalId];
+          await upsertGoal.mutateAsync({
+            ...original,
+            ...updates,
+            id: goalId,
+          });
+        }
+      }
+
       await updateStatus.mutateAsync({
         id:             reviewing.id,
         status:         action as SheetStatus,
@@ -91,9 +130,26 @@ const GoalApprovalPage = () => {
       setReviewing(null);
       setAction(null);
       setReworkComment('');
+      
+      // Clear edits for this sheet
+      const newEdits = { ...editedGoals };
+      const sheetGoals = (reviewing as any).goals ?? [];
+      sheetGoals.forEach((g: any) => delete newEdits[g.id]);
+      setEditedGoals(newEdits);
+      
     } catch (err: any) {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });
     }
+  };
+
+  const handleEdit = (goalId: string, field: string, value: any) => {
+    setEditedGoals(prev => ({
+      ...prev,
+      [goalId]: {
+        ...(prev[goalId] || {}),
+        [field]: value
+      }
+    }));
   };
 
   return (
@@ -232,39 +288,85 @@ const GoalApprovalPage = () => {
                     {goals.length === 0 ? (
                       <p className="text-sm text-muted-foreground italic">No goals recorded yet.</p>
                     ) : (
-                      goals.map((goal: any, idx: number) => (
-                        <div key={goal.id} className="rounded-xl border bg-background p-4 space-y-2">
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="flex-1">
-                              <p className="font-medium text-sm">
-                                {idx + 1}. {goal.goal_title}
-                              </p>
-                              {goal.description && (
-                                <p className="text-xs text-muted-foreground mt-0.5">{goal.description}</p>
-                              )}
+                      goals.map((goal: any, idx: number) => {
+                        const edits = editedGoals[goal.id] || {};
+                        const weightage = edits.weightage ?? goal.weightage;
+                        const targetVal = edits.target_value ?? goal.target_value;
+                        const targetDate = edits.target_date ?? goal.target_date;
+                        const isEditable = sheet.status === 'submitted' && !goal.is_shared;
+
+                        return (
+                          <div key={goal.id} className="rounded-xl border bg-background p-4 space-y-3">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex-1">
+                                <p className="font-medium text-sm">
+                                  {idx + 1}. {goal.goal_title}
+                                </p>
+                                {goal.description && (
+                                  <p className="text-xs text-muted-foreground mt-0.5">{goal.description}</p>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0">
+                                {sheet.status === 'submitted' ? (
+                                  <div className="flex items-center gap-2">
+                                    <Label className="text-xs text-muted-foreground">Wt%</Label>
+                                    <Input
+                                      type="number"
+                                      value={weightage}
+                                      onChange={(e) => handleEdit(goal.id, 'weightage', Number(e.target.value))}
+                                      className="w-16 h-7 text-xs"
+                                    />
+                                  </div>
+                                ) : (
+                                  <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
+                                    {goal.weightage}%
+                                  </span>
+                                )}
+                                {goal.thrust_area && (
+                                  <span className="text-xs text-primary bg-primary/10 px-2 py-0.5 rounded-full">
+                                    {goal.thrust_area.name}
+                                  </span>
+                                )}
+                              </div>
                             </div>
-                            <div className="flex items-center gap-2 shrink-0">
-                              <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
-                                {goal.weightage}%
-                              </span>
-                              {goal.thrust_area && (
-                                <span className="text-xs text-primary bg-primary/10 px-2 py-0.5 rounded-full">
-                                  {goal.thrust_area.name}
-                                </span>
+                            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs text-muted-foreground items-center">
+                              <span>UoM: <strong className="text-foreground">{goal.uom_type}</strong></span>
+                              
+                              {(goal.uom_type === 'min' || goal.uom_type === 'max') && (
+                                <div className="flex items-center gap-2">
+                                  <span>Target:</span>
+                                  {isEditable ? (
+                                    <Input
+                                      type="number"
+                                      value={targetVal || ''}
+                                      onChange={(e) => handleEdit(goal.id, 'target_value', Number(e.target.value))}
+                                      className="w-24 h-7 text-xs"
+                                    />
+                                  ) : (
+                                    <strong className="text-foreground">{targetVal}</strong>
+                                  )}
+                                </div>
+                              )}
+                              
+                              {goal.uom_type === 'timeline' && (
+                                <div className="flex items-center gap-2">
+                                  <span>Deadline:</span>
+                                  {isEditable ? (
+                                    <Input
+                                      type="date"
+                                      value={targetDate || ''}
+                                      onChange={(e) => handleEdit(goal.id, 'target_date', e.target.value)}
+                                      className="h-7 text-xs"
+                                    />
+                                  ) : (
+                                    <strong className="text-foreground">{targetDate ? format(new Date(targetDate), 'dd MMM yyyy') : '—'}</strong>
+                                  )}
+                                </div>
                               )}
                             </div>
                           </div>
-                          <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs text-muted-foreground">
-                            <span>UoM: <strong className="text-foreground">{goal.uom_type}</strong></span>
-                            {goal.target_value != null && (
-                              <span>Target: <strong className="text-foreground">{goal.target_value}</strong></span>
-                            )}
-                            {goal.target_date && (
-                              <span>Deadline: <strong className="text-foreground">{format(new Date(goal.target_date), 'dd MMM yyyy')}</strong></span>
-                            )}
-                          </div>
-                        </div>
-                      ))
+                        );
+                      })
                     )}
 
                     {/* Rework comment if returned */}

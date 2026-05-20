@@ -192,15 +192,15 @@ export function useMyGoalSheets(employeeId: string) {
   });
 }
 
-export function useTeamGoalSheets(cycleId?: string) {
+export function useTeamGoalSheets(cycleId?: string, managerId?: string) {
   return useQuery({
-    queryKey: goalKeys.teamSheets(cycleId),
+    queryKey: [...goalKeys.sheets(), 'team', cycleId, managerId],
     queryFn: async () => {
       let query = supabase
         .from('hr_goal_sheets')
         .select(`
           *,
-          employee:hr_employees(id, full_name, employee_code, department, designation),
+          employee:hr_employees(id, full_name, employee_code, department, designation, manager_id),
           cycle:hr_goal_cycles(*),
           goals:hr_goals(*, thrust_area:hr_thrust_areas(*))
         `)
@@ -208,8 +208,14 @@ export function useTeamGoalSheets(cycleId?: string) {
       if (cycleId) query = query.eq('cycle_id', cycleId);
       const { data, error } = await query;
       if (error) throw error;
-      return data as GoalSheet[];
+      
+      let filtered = data as GoalSheet[];
+      if (managerId) {
+        filtered = filtered.filter(sheet => sheet.employee?.manager_id === managerId);
+      }
+      return filtered;
     },
+    enabled: managerId !== undefined ? !!managerId : true,
   });
 }
 

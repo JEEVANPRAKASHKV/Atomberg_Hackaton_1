@@ -50,7 +50,7 @@ const MyTeamPage = () => {
         // Fetch direct reports
         const { data: directReports, error: reportsError } = await supabase
           .from('hr_employees')
-          .select('id, full_name, email, role, status, employee_code, joining_date')
+          .select('id, full_name, email, role, status, employee_code, date_of_joining, department, designation, phone')
           .eq('manager_id', currentEmployee.id)
           .order('full_name');
 
@@ -60,27 +60,21 @@ const MyTeamPage = () => {
           return;
         }
 
-        // Fetch employee details for department/designation/phone
         const employeeIds = (directReports || []).map(e => e.id);
-        const { data: detailsData } = await supabase
-          .from('hr_employee_details')
-          .select('employee_id, department, designation, phone')
-          .in('employee_id', employeeIds);
-
-        const detailsMap = new Map(
-          (detailsData || []).map(d => [d.employee_id, d])
-        );
 
         // Combine data
-        const combined: TeamMember[] = (directReports || []).map(emp => {
-          const details = detailsMap.get(emp.id);
-          return {
-            ...emp,
-            department: details?.department || null,
-            designation: details?.designation || null,
-            phone: details?.phone || null,
-          };
-        });
+        const combined: TeamMember[] = ((directReports as any[]) || []).map(emp => ({
+          id: emp.id,
+          full_name: emp.full_name,
+          email: emp.email,
+          role: emp.role,
+          status: emp.status,
+          employee_code: emp.employee_code,
+          joining_date: emp.date_of_joining || null,
+          department: emp.department || null,
+          designation: emp.designation || null,
+          phone: emp.phone || null,
+        }));
 
         setTeamMembers(combined);
 

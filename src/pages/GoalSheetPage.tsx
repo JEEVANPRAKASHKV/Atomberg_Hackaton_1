@@ -13,7 +13,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import {
   useActiveGoalCycle, useGoalSheet, useCreateGoalSheet,
-  useUpsertGoal, useDeleteGoal, useUpdateGoalSheetStatus, useThrustAreas
+  useUpsertGoal, useDeleteGoal, useUpdateGoalSheetStatus, useThrustAreas,
+  useSharedGoals, useUpdateSharedGoalStatus
 } from '@/hooks/useGoals';
 import { GoalWeightageBar } from '@/components/goals/GoalWeightageBar';
 import { GoalSheetStatusBadge, SharedGoalBadge } from '@/components/goals/GoalStatusBadges';
@@ -58,6 +59,8 @@ const GoalSheetPage = () => {
   const { data: cycle }          = useActiveGoalCycle();
   const { data: thrustAreas = [] } = useThrustAreas();
   const { data: sheet, refetch } = useGoalSheet(employeeId ?? '', cycle?.id ?? '');
+  const { data: sharedGoals = [] } = useSharedGoals(employeeId ?? '');
+  const updateSharedStatus = useUpdateSharedGoalStatus();
 
   const createSheet  = useCreateGoalSheet();
   const upsertGoal   = useUpsertGoal();
@@ -114,6 +117,56 @@ const GoalSheetPage = () => {
     setRows(prev => prev.filter((_, i) => i !== idx));
   };
 
+  const handleAcceptSharedGoal = async (shared: any) => {
+    try {
+      setSaving(true);
+      const sheetId = await ensureSheet();
+      const sg = shared.source_goal;
+      
+      // 1. Insert the goal into the employee's sheet
+      await upsertGoal.mutateAsync({
+        goal_sheet_id: sheetId,
+        employee_id: employeeId!,
+        thrust_area_id: sg.thrust_area_id || undefined,
+        goal_title: sg.goal_title,
+        description: sg.description || undefined,
+        uom_type: sg.uom_type,
+        target_value: sg.target_value ?? undefined,
+        target_date: sg.target_date ?? undefined,
+        weightage: shared.custom_weightage ?? 20,
+        is_shared: true,
+        shared_goal_id: sg.id,
+      } as any);
+
+      // 2. Mark shared goal as accepted
+      await updateSharedStatus.mutateAsync({
+        id: shared.id,
+        status: 'accepted',
+        employeeId: employeeId!,
+      });
+
+      await refetch();
+      toast({ title: 'Shared goal added to your sheet!' });
+    } catch (err: any) {
+      toast({ title: 'Error accepting goal', description: err.message, variant: 'destructive' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeclineSharedGoal = async (shared: any) => {
+    try {
+      await updateSharedStatus.mutateAsync({
+        id: shared.id,
+        status: 'declined',
+        employeeId: employeeId!,
+      });
+      toast({ title: 'Shared goal declined.' });
+    } catch (err: any) {
+      toast({ title: 'Error declining goal', description: err.message, variant: 'destructive' });
+    }
+  };
+
   const handleSave = async () => {
     setSaving(true);
     try {
@@ -151,6 +204,9 @@ const GoalSheetPage = () => {
     if (rows.filter(r => r.goal_title.trim()).length < 3) {
       toast({ title: 'Add at least 3 goals before submitting', variant: 'destructive' }); return;
     }
+    if (rows.length > 8) {
+      toast({ title: 'Maximum 8 goals allowed per employee', variant: 'destructive' }); return;
+    }
     try {
       await handleSave();
       await updateStatus.mutateAsync({ id: sheet.id, status: 'submitted' });
@@ -185,6 +241,7 @@ const GoalSheetPage = () => {
 
   const isSubmitted = sheet?.status === 'submitted';
   const totalGoals  = rows.filter(r => r.goal_title.trim()).length;
+  const pendingShared = sharedGoals.filter(g => g.status === 'pending');
 
   return (
     <div className="p-6 space-y-6 max-w-5xl mx-auto">
@@ -213,6 +270,36 @@ const GoalSheetPage = () => {
 
       {/* Check-In Banner */}
       <CheckInWindowBanner cycle={cycle} />
+
+      {/* Pending Shared Goals Alert */}
+      {!isSubmitted && pendingShared.length > 0 && (
+        <div className="space-y-3">
+          {pendingShared.map(shared => (
+            <div key={shared.id} className="flex items-center justify-between rounded-xl border border-blue-200 bg-blue-50 p-4">
+              <div className="flex gap-3">
+                <AlertCircle className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-semibold text-blue-900">
+                    Shared KPI assigned by {shared.pushed_by_employee?.full_name}
+                  </p>
+                  <p className="text-sm text-blue-800 mt-1">
+                    <span className="font-medium">{shared.source_goal?.goal_title}</span>
+                    {shared.custom_weightage && ` · Suggested weightage: ${shared.custom_weightage}%`}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="outline" className="bg-white" onClick={() => handleDeclineSharedGoal(shared)} disabled={saving}>
+                  Decline
+                </Button>
+                <Button size="sm" onClick={() => handleAcceptSharedGoal(shared)} disabled={saving || rows.length >= 8}>
+                  Accept
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Rework comment */}
       {sheet?.status === 'rework' && sheet.rework_comment && (
@@ -367,7 +454,7 @@ const GoalSheetPage = () => {
       </div>
 
       {/* Add Goal Button */}
-      {!isSubmitted && (
+      {!isSubmitted && rows.length < 8 && (
         <Button
           variant="dashed"
           className="w-full gap-2 border-2 border-dashed"
@@ -375,6 +462,13 @@ const GoalSheetPage = () => {
         >
           <Plus className="w-4 h-4" /> Add Goal
         </Button>
+      )}
+
+      {/* Max Goals Info */}
+      {!isSubmitted && rows.length >= 8 && (
+        <div className="text-center text-sm text-amber-600 bg-amber-50 p-3 rounded-lg border border-amber-200">
+          You have reached the maximum limit of 8 goals.
+        </div>
       )}
 
       {/* Info Bar */}

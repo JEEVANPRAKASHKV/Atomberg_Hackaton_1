@@ -200,7 +200,7 @@ export function useTeamGoalSheets(cycleId?: string, managerId?: string) {
         .from('hr_goal_sheets')
         .select(`
           *,
-          employee:hr_employees(id, full_name, employee_code, department, designation, manager_id),
+          employee:hr_employees!hr_goal_sheets_employee_id_fkey(id, full_name, employee_code, manager_id),
           cycle:hr_goal_cycles(*),
           goals:hr_goals(*, thrust_area:hr_thrust_areas(*))
         `)
@@ -570,7 +570,7 @@ export function useAllGoalSheets(cycleId?: string) {
         .from('hr_goal_sheets')
         .select(`
           *,
-          employee:hr_employees(id, full_name, employee_code, department, designation),
+          employee:hr_employees!hr_goal_sheets_employee_id_fkey(id, full_name, employee_code),
           cycle:hr_goal_cycles(*),
           goals:hr_goals(
             *,
